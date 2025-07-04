@@ -2,43 +2,74 @@ import axios from "axios";
 
 export async function POST(req) {
   try {
-    const { task } = await req.json();
-    console.log("Task received in API:", task);
-    console.log("GEMINI_API_KEY:", process.env.GEMINI_API_KEY);
+    const requestData = await req.json();
+    console.log("Received data:", requestData);
 
-    const prompt = `Break the following task into 3-5 smaller, clear, actionable subtasks:\n\n"${task}"`;
+    // extract and convert task text to string
+    const taskData = requestData.task || requestData;
+    const taskText = String(
+      taskData.title || taskData.description || taskData || ""
+    ).trim();
+
+    if (!taskText) {
+      return Response.json(
+        { error: "Task content is required" },
+        { status: 400 }
+      );
+    }
+
+    if (!process.env.GEMINI_API_KEY) {
+      console.error("GEMINI_API_KEY is missing");
+      return Response.json(
+        { error: "Server configuration error" },
+        { status: 500 }
+      );
+    }
+
+    const prompt = `Break the following task into 3-5 smaller, clear, actionable subtasks:\n\n"${taskText}"`;
 
     const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
-        contents: [{ parts: [{ text: prompt }] }],
+        contents: [
+          {
+            parts: [
+              {
+                text: prompt,
+              },
+            ],
+          },
+        ],
       },
       {
         headers: {
           "Content-Type": "application/json",
         },
+        timeout: 10000,
       }
     );
 
     const text =
-      response.data?.candidates?.[0]?.content?.parts?.[0]?.text ||
-      "No response from Gemini";
+      response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    console.log("Gemini response text:", text);
 
     const subtasks = text
-      .split(/\n|\d+\.\s/)
-      .map((subtask) => subtask.trim())
-      .filter(Boolean);
+      .split("\n")
+      .map((line) => line.replace(/^\d+\.\s*/, "").trim())
+      .filter(
+        (line) => line.length > 0 && !line.toLowerCase().includes("note:")
+      );
 
     return Response.json({ subtasks });
   } catch (error) {
-    console.log("🚨 Error in API:", error);
+    console.error("API Error:", error);
 
-    console.error(
-      "Error suggesting subtasks:",
-      error.response?.data || error.message
-    );
     return Response.json(
-      { error: "Error suggesting subtasks" },
+      {
+        error: "Error suggesting subtasks",
+        details: error.message,
+        stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
+      },
       { status: 500 }
     );
   }
